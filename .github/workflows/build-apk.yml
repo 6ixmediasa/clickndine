@@ -46,24 +46,9 @@ jobs:
           base64 -d ../branding/logo.png.b64 > assets/image/logo.png
           base64 -d ../branding/logo_name.png.b64 > assets/image/logo_name.png
 
-          # Restore the local Roboto font declaration when the compact payload omitted it.
-          if ! grep -q "family: Roboto" pubspec.yaml; then
-            cat >> pubspec.yaml <<'EOF'
-
-            # ClicKnDine local typography
-              fonts:
-                - family: Roboto
-                  fonts:
-                    - asset: assets/font/Roboto-Regular.ttf
-                      weight: 400
-                    - asset: assets/font/Roboto-Medium.ttf
-                      weight: 500
-                    - asset: assets/font/Roboto-Bold.ttf
-                      weight: 700
-                    - asset: assets/font/Roboto-Black.ttf
-                      weight: 900
-          EOF
-          fi
+          # The compact payload intentionally uses Flutter's platform font fallback.
+          # Font files are included for future packaging, but no extra pubspec font block
+          # is injected here to keep the manifest valid.
 
           # Create lightweight fallbacks only for stock animation/oversized assets
           # omitted from the compact CI payload. The user-provided real static assets
