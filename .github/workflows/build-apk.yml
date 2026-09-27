@@ -1,0 +1,170 @@
+name: Build ClicKnDine Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-apk.yml'
+      - 'payload/**'
+      - 'assets_payload/**'
+      - 'branding/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout build payload
+        uses: actions/checkout@v4
+
+      - name: Reconstruct ClicKnDine source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf app /tmp/clickndine
+          mkdir -p app /tmp/clickndine
+          cat payload/chunk_*.b64 | base64 -d > /tmp/clickndine/source.tar.gz
+          tar -xzf /tmp/clickndine/source.tar.gz -C app
+
+          cat assets_payload/chunk_*.b64 | base64 -d > /tmp/clickndine/assets.tar.gz
+          tar -xzf /tmp/clickndine/assets.tar.gz -C app
+
+          echo "Source reconstructed."
+
+      - name: Finalize ClicKnDine branding and missing assets
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+
+          mkdir -p assets/image assets/font
+          base64 -d ../branding/logo.png.b64 > assets/image/logo.png
+          base64 -d ../branding/logo_name.png.b64 > assets/image/logo_name.png
+
+          # Restore the local Roboto font declaration when the compact payload omitted it.
+          if ! grep -q "family: Roboto" pubspec.yaml; then
+            cat >> pubspec.yaml <<'EOF'
+
+            # ClicKnDine local typography
+              fonts:
+                - family: Roboto
+                  fonts:
+                    - asset: assets/font/Roboto-Regular.ttf
+                      weight: 400
+                    - asset: assets/font/Roboto-Medium.ttf
+                      weight: 500
+                    - asset: assets/font/Roboto-Bold.ttf
+                      weight: 700
+                    - asset: assets/font/Roboto-Black.ttf
+                      weight: 900
+          EOF
+          fi
+
+          # Create lightweight fallbacks only for stock animation/oversized assets
+          # omitted from the compact CI payload. The user-provided real static assets
+          # remain untouched.
+          PNG_B64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zs9sAAAAASUVORK5CYII='
+          if [ -f image_asset_names.txt ]; then
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              target="assets/image/$file"
+              [ -f "$target" ] && continue
+              mkdir -p "$(dirname "$target")"
+              case "$file" in
+                *.svg|*.SVG)
+                  cat > "$target" <<'SVG'
+          <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+            <rect width="512" height="512" rx="48" fill="#fff"/>
+            <circle cx="256" cy="256" r="150" fill="#ED1C24" opacity=".12"/>
+            <circle cx="256" cy="256" r="70" fill="#ED1C24"/>
+          </svg>
+          SVG
+                  ;;
+                *)
+                  printf '%s' "$PNG_B64" | base64 -d > "$target"
+                  ;;
+              esac
+            done < image_asset_names.txt
+          fi
+
+          # Android launcher and notification assets use the supplied ClicKnDine logo.
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p "android/app/src/main/res/mipmap-$density"
+            cp assets/image/logo.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+          mkdir -p android/app/src/main/res/drawable android/app/src/main/res/raw
+          cp assets/image/logo.png android/app/src/main/res/drawable/notification_icon.png
+
+          # Safe local notification sound fallback.
+          python3 - <<'PY'
+          import wave
+          with wave.open('android/app/src/main/res/raw/notification.wav', 'wb') as w:
+              w.setnchannels(1)
+              w.setsampwidth(2)
+              w.setframerate(8000)
+              w.writeframes(b'\x00\x00' * 800)
+          PY
+
+          # Keep the existing Firebase project buildable under the new Android package.
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('android/app/google-services.json')
+          if p.exists():
+              data=json.loads(p.read_text())
+              changed=False
+              for c in data.get('client', []):
+                  a=c.get('client_info',{}).get('android_client_info',{})
+                  if a.get('package_name') == 'com.sixamtech.stackfooduser':
+                      a['package_name']='com.sixmediasa.clickndine'
+                      changed=True
+              if changed:
+                  p.write_text(json.dumps(data, indent=2))
+          PY
+
+          echo "Branding finalized."
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Verify Flutter
+        run: flutter --version
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: app
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/build/app/outputs/flutter-apk/app-release.apk
+          ls -lh app/build/app/outputs/flutter-apk/app-release.apk
+          sha256sum app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload ClicKnDine APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClicKnDine-Android-APK
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
