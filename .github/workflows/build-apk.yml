@@ -1,5 +1,5 @@
 name: Build ClicKnDine Android APK
-# client-final-red-theme
+# client-final-red-theme-maps
 
 on:
   push:
@@ -94,6 +94,17 @@ jobs:
               w.setsampwidth(2)
               w.setframerate(8000)
               w.writeframes(b'\x00\x00' * 800)
+          PY
+
+          # Configure the ClicKnDine Android package and Google Maps key.
+          sed -i 's/applicationId = "com.sixamtech.stackfooduser"/applicationId = "com.sixmediasa.clickndine"/' android/app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          import re
+          s=re.sub(r'(<meta-data android:name="com\.google\.android\.geo\.API_KEY"\s*android:value=")[^"]+(")', r'\g<1>AIzaSyCn3SP_MDcK__4j0JMIIg54oQp2VgUL36k\2', s)
+          p.write_text(s)
           PY
 
           # Keep the existing Firebase project buildable under the new Android package.
