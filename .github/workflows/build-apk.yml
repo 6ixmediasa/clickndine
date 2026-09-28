@@ -1,5 +1,5 @@
 name: Build ClicKnDine Android APK
-# client-final-red-theme-maps-v2
+# client-final-firebase-maps
 
 on:
   push:
@@ -107,22 +107,8 @@ jobs:
           p.write_text(s)
           PY
 
-          # Keep the existing Firebase project buildable under the new Android package.
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          p=Path('android/app/google-services.json')
-          if p.exists():
-              data=json.loads(p.read_text())
-              changed=False
-              for c in data.get('client', []):
-                  a=c.get('client_info',{}).get('android_client_info',{})
-                  if a.get('package_name') == 'com.sixamtech.stackfooduser':
-                      a['package_name']='com.sixmediasa.clickndine'
-                      changed=True
-              if changed:
-                  p.write_text(json.dumps(data, indent=2))
-          PY
+          # Install the final Firebase config containing both ClicKnDine Android apps.
+          base64 -d ../branding/google-services.json.b64 > android/app/google-services.json
 
           echo "Branding finalized."
 
