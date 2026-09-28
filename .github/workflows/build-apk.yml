@@ -1,5 +1,5 @@
 name: Build ClicKnDine Android APK
-# client-final-red-theme-maps
+# client-final-red-theme-maps-v2
 
 on:
   push:
@@ -103,7 +103,7 @@ jobs:
           p=Path('android/app/src/main/AndroidManifest.xml')
           s=p.read_text()
           import re
-          s=re.sub(r'(<meta-data android:name="com\.google\.android\.geo\.API_KEY"\s*android:value=")[^"]+(")', r'\g<1>AIzaSyCn3SP_MDcK__4j0JMIIg54oQp2VgUL36k\2', s)
+          s=re.sub(r'(<meta-data android:name="com\.google\.android\.geo\.API_KEY"\s*android:value=")[^"]+(")', r'\g<1>AIzaSyBKO1ReSpkl1H53oczHBdgCgcChAe3sE9g\2', s)
           p.write_text(s)
           PY
 
