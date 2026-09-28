@@ -1,0 +1,75 @@
+name: Build ClicKnDine Driver Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-driver-apk.yml'
+      - 'driver_payload/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-driver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout driver payload
+        uses: actions/checkout@v4
+
+      - name: Reconstruct ClicKnDine Driver source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf driver_app /tmp/clickndine-driver
+          mkdir -p driver_app /tmp/clickndine-driver
+          cat driver_payload/chunk_*.b64 | base64 -d > /tmp/clickndine-driver/source.tar.gz
+          tar -xzf /tmp/clickndine-driver/source.tar.gz -C driver_app
+          # Remove an orphaned legacy font-weight line from the vendor pubspec.
+          sed -i '/^[[:space:]]*weight:[[:space:]]*900[[:space:]]*$/d' driver_app/pubspec.yaml
+          test -f driver_app/android/app/google-services.json
+          grep -q 'com.sixmediasa.clickndine.driver' driver_app/android/app/build.gradle.kts
+          grep -q 'AIzaSyBKO1ReSpkl1H53oczHBdgCgcChAe3sE9g' driver_app/android/app/src/main/AndroidManifest.xml
+          echo "Driver source reconstructed and validated."
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Verify Flutter
+        run: flutter --version
+
+      - name: Install dependencies
+        working-directory: driver_app
+        run: flutter pub get
+
+      - name: Build driver release APK
+        working-directory: driver_app
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Verify driver APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s driver_app/build/app/outputs/flutter-apk/app-release.apk
+          ls -lh driver_app/build/app/outputs/flutter-apk/app-release.apk
+          sha256sum driver_app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload ClicKnDine Driver APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClicKnDine-Driver-Android-APK
+          path: driver_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
