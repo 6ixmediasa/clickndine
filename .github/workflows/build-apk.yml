@@ -119,11 +119,18 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('lib/main.dart')
-          s=p.read_text()
+          import re
+
+          p = Path('lib/main.dart')
+          s = p.read_text()
+
           if "package:flutter/services.dart" not in s:
-              s=s.replace("import 'package:flutter/material.dart';", "import 'package:flutter/material.dart';\\nimport 'package:flutter/services.dart';")
-          old="""  }else if(GetPlatform.isAndroid) {
+              lines = s.splitlines()
+              idx = lines.index("import 'package:flutter/material.dart';")
+              lines.insert(idx + 1, "import 'package:flutter/services.dart';")
+              s = chr(10).join(lines) + chr(10)
+
+          old = """  }else if(GetPlatform.isAndroid) {
             await Firebase.initializeApp(
               options: const FirebaseOptions(
                 apiKey: 'AIzaSyCc3OCd5I2xSlnftZ4bFAbuCzMhgQHLivA',
@@ -136,22 +143,31 @@ jobs:
             await Firebase.initializeApp();
           }
           """
-          new="""  } else {
+          new = """  } else {
             // Use the Firebase project configured by google-services.json / GoogleService-Info.plist.
             await Firebase.initializeApp();
           }
           """
+
           if old in s:
-              s=s.replace(old,new)
+              s = s.replace(old, new)
           else:
-              import re
-              s=re.sub(
-                  r"\}\s*else if\(GetPlatform\.isAndroid\)\s*\{.*?projectId:\s*'stackmart-500c7',.*?\n\s*\),\s*\n\s*\);\s*\n\s*\}\s*else\s*\{\s*\n\s*await Firebase\.initializeApp\(\);\s*\n\s*\}",
-                  "} else {\\n    // Use the Firebase project configured by google-services.json / GoogleService-Info.plist.\\n    await Firebase.initializeApp();\\n  }",
-                  s, count=1, flags=re.S,
+              replacement = (
+                  "} else {" + chr(10)
+                  + "    // Use the Firebase project configured by google-services.json / GoogleService-Info.plist." + chr(10)
+                  + "    await Firebase.initializeApp();" + chr(10)
+                  + "  }"
               )
+              s = re.sub(
+                  r"\}\s*else if\(GetPlatform\.isAndroid\)\s*\{.*?projectId:\s*'stackmart-500c7',.*?\n\s*\),\s*\n\s*\);\s*\n\s*\}\s*else\s*\{\s*\n\s*await Firebase\.initializeApp\(\);\s*\n\s*\}",
+                  lambda _: replacement,
+                  s,
+                  count=1,
+                  flags=re.S,
+              )
+
           if "SystemChrome.setSystemUIOverlayStyle" not in s:
-              s=s.replace("  DeepLinkBody? linkBody;", """  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+              ui = """  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
             statusBarColor: Colors.white,
             statusBarIconBrightness: Brightness.dark,
             statusBarBrightness: Brightness.light,
@@ -159,17 +175,23 @@ jobs:
             systemNavigationBarIconBrightness: Brightness.dark,
           ));
 
-          DeepLinkBody? linkBody;""", 1)
-          s=s.replace("final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage();",
-                      "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage().timeout(const Duration(seconds: 4), onTimeout: () => null);")
-          s=s.replace("await NotificationHelper.initialize(flutterLocalNotificationsPlugin);",
-                      "await NotificationHelper.initialize(flutterLocalNotificationsPlugin).timeout(const Duration(seconds: 4));")
+          DeepLinkBody? linkBody;"""
+              s = s.replace("  DeepLinkBody? linkBody;", ui, 1)
+
+          s = s.replace(
+              "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage();",
+              "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage().timeout(const Duration(seconds: 4), onTimeout: () => null);",
+          )
+          s = s.replace(
+              "await NotificationHelper.initialize(flutterLocalNotificationsPlugin);",
+              "await NotificationHelper.initialize(flutterLocalNotificationsPlugin).timeout(const Duration(seconds: 4));",
+          )
           p.write_text(s)
 
-          p=Path('lib/features/splash/screens/splash_screen.dart')
-          s=p.read_text()
+          p = Path('lib/features/splash/screens/splash_screen.dart')
+          s = p.read_text()
           if "backgroundColor: Colors.white" not in s:
-              s=s.replace("return Scaffold(", "return Scaffold(\\n      backgroundColor: Colors.white,", 1)
+              s = s.replace("return Scaffold(", "return Scaffold(" + chr(10) + "      backgroundColor: Colors.white,", 1)
           p.write_text(s)
           PY
 
