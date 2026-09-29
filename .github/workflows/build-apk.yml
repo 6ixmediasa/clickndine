@@ -225,7 +225,7 @@ jobs:
           from pathlib import Path
           main=Path('lib/main.dart').read_text()
           splash=Path('lib/features/splash/screens/splash_screen.dart').read_text()
-          assert "stackmart-500c7" not in main, "old Stackmart Firebase project still present"
+          assert "AIzaSyCc3OCd5I2xSlnftZ4bFAbuCzMhgQHLivA" not in main, "old Android Firebase project still present"
           assert "getInitialMessage().timeout" in main, "notification startup timeout not applied"
           assert "backgroundColor: Colors.white" in splash, "white Flutter splash not applied"
           print("Startup and splash fixes verified.")
