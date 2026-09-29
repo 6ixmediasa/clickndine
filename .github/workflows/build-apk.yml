@@ -1,5 +1,5 @@
 name: Build ClicKnDine Android APK
-# client-final-firebase-maps
+# client-startup-fix-white-splash
 
 on:
   push:
@@ -111,6 +111,112 @@ jobs:
           base64 -d ../branding/google-services.json.b64 > android/app/google-services.json
 
           echo "Branding finalized."
+
+      - name: Fix Firebase startup and white splash
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lib/main.dart')
+          s=p.read_text()
+          if "package:flutter/services.dart" not in s:
+              s=s.replace("import 'package:flutter/material.dart';", "import 'package:flutter/material.dart';\\nimport 'package:flutter/services.dart';")
+          old="""  }else if(GetPlatform.isAndroid) {
+            await Firebase.initializeApp(
+              options: const FirebaseOptions(
+                apiKey: 'AIzaSyCc3OCd5I2xSlnftZ4bFAbuCzMhgQHLivA',
+                appId: '1:491987943015:android:fe79b69339834d5c8f1ec2',
+                messagingSenderId: '491987943015',
+                projectId: 'stackmart-500c7',
+              ),
+            );
+          } else {
+            await Firebase.initializeApp();
+          }
+          """
+          new="""  } else {
+            // Use the Firebase project configured by google-services.json / GoogleService-Info.plist.
+            await Firebase.initializeApp();
+          }
+          """
+          if old in s:
+              s=s.replace(old,new)
+          if "SystemChrome.setSystemUIOverlayStyle" not in s:
+              s=s.replace("  DeepLinkBody? linkBody;", """  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+            statusBarColor: Colors.white,
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
+            systemNavigationBarColor: Colors.white,
+            systemNavigationBarIconBrightness: Brightness.dark,
+          ));
+
+          DeepLinkBody? linkBody;""", 1)
+          s=s.replace("final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage();",
+                      "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage().timeout(const Duration(seconds: 4), onTimeout: () => null);")
+          s=s.replace("await NotificationHelper.initialize(flutterLocalNotificationsPlugin);",
+                      "await NotificationHelper.initialize(flutterLocalNotificationsPlugin).timeout(const Duration(seconds: 4));")
+          p.write_text(s)
+
+          p=Path('lib/features/splash/screens/splash_screen.dart')
+          s=p.read_text()
+          if "key: _globalKey,\\n      backgroundColor: Colors.white," not in s:
+              s=s.replace("return Scaffold(\\n      key: _globalKey,", "return Scaffold(\\n      key: _globalKey,\\n      backgroundColor: Colors.white,")
+          p.write_text(s)
+          PY
+
+          cat > android/app/src/main/res/drawable/launch_background.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@android:color/white" />
+              <item><bitmap android:gravity="center" android:src="@mipmap/ic_launcher" /></item>
+          </layer-list>
+          XML
+          mkdir -p android/app/src/main/res/drawable-v21
+          cp android/app/src/main/res/drawable/launch_background.xml android/app/src/main/res/drawable-v21/launch_background.xml
+
+          cat > android/app/src/main/res/values/styles.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@drawable/launch_background</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@android:color/white</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          XML
+          mkdir -p android/app/src/main/res/values-night android/app/src/main/res/values-v31
+          cp android/app/src/main/res/values/styles.xml android/app/src/main/res/values-night/styles.xml
+          cat > android/app/src/main/res/values-v31/styles.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowSplashScreenBackground">@android:color/white</item>
+                  <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@android:color/white</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          XML
+
+          grep -q "await Firebase.initializeApp();" lib/main.dart
+          grep -q "backgroundColor: Colors.white" lib/features/splash/screens/splash_screen.dart
+          echo "Startup and splash fixes applied."
 
       - name: Set up Java
         uses: actions/setup-java@v4
