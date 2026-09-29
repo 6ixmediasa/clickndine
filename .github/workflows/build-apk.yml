@@ -143,6 +143,13 @@ jobs:
           """
           if old in s:
               s=s.replace(old,new)
+          else:
+              import re
+              s=re.sub(
+                  r"\}\s*else if\(GetPlatform\.isAndroid\)\s*\{.*?projectId:\s*'stackmart-500c7',.*?\n\s*\),\s*\n\s*\);\s*\n\s*\}\s*else\s*\{\s*\n\s*await Firebase\.initializeApp\(\);\s*\n\s*\}",
+                  "} else {\\n    // Use the Firebase project configured by google-services.json / GoogleService-Info.plist.\\n    await Firebase.initializeApp();\\n  }",
+                  s, count=1, flags=re.S,
+              )
           if "SystemChrome.setSystemUIOverlayStyle" not in s:
               s=s.replace("  DeepLinkBody? linkBody;", """  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
             statusBarColor: Colors.white,
@@ -161,8 +168,8 @@ jobs:
 
           p=Path('lib/features/splash/screens/splash_screen.dart')
           s=p.read_text()
-          if "key: _globalKey,\\n      backgroundColor: Colors.white," not in s:
-              s=s.replace("return Scaffold(\\n      key: _globalKey,", "return Scaffold(\\n      key: _globalKey,\\n      backgroundColor: Colors.white,")
+          if "backgroundColor: Colors.white" not in s:
+              s=s.replace("return Scaffold(", "return Scaffold(\\n      backgroundColor: Colors.white,", 1)
           p.write_text(s)
           PY
 
@@ -214,9 +221,15 @@ jobs:
           </resources>
           XML
 
-          grep -q "await Firebase.initializeApp();" lib/main.dart
-          grep -q "backgroundColor: Colors.white" lib/features/splash/screens/splash_screen.dart
-          echo "Startup and splash fixes applied."
+          python3 - <<'PY'
+          from pathlib import Path
+          main=Path('lib/main.dart').read_text()
+          splash=Path('lib/features/splash/screens/splash_screen.dart').read_text()
+          assert "stackmart-500c7" not in main, "old Stackmart Firebase project still present"
+          assert "getInitialMessage().timeout" in main, "notification startup timeout not applied"
+          assert "backgroundColor: Colors.white" in splash, "white Flutter splash not applied"
+          print("Startup and splash fixes verified.")
+          PY
 
       - name: Set up Java
         uses: actions/setup-java@v4
