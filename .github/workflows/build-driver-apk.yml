@@ -34,6 +34,132 @@ jobs:
           grep -q 'AIzaSyBKO1ReSpkl1H53oczHBdgCgcChAe3sE9g' driver_app/android/app/src/main/AndroidManifest.xml
           echo "Driver source reconstructed and validated."
 
+      - name: Fix driver Firebase startup and white splash
+        shell: bash
+        working-directory: driver_app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('lib/main.dart')
+          s = p.read_text()
+          if "package:flutter/services.dart" not in s:
+              s = s.replace("import 'package:flutter/material.dart';", "import 'package:flutter/material.dart';" + chr(10) + "import 'package:flutter/services.dart';")
+
+          old = """  if(GetPlatform.isAndroid) {
+            await Firebase.initializeApp(
+              options: const FirebaseOptions(
+                apiKey: 'AIzaSyBKO1ReSpkl1H53oczHBdgCgcChAe3sE9g',
+                appId: '1:491987943015:android:a6fb4303cc4bf3d18f1ec2',
+                messagingSenderId: '491987943015',
+                projectId: 'stackmart-500c7',
+              ),
+            );
+          } else {
+            await Firebase.initializeApp();
+          }
+          """
+          new = """  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+            statusBarColor: Colors.white,
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
+            systemNavigationBarColor: Colors.white,
+            systemNavigationBarIconBrightness: Brightness.dark,
+          ));
+
+          try {
+            // Read the ClicKnDine Firebase project from google-services.json.
+            await Firebase.initializeApp().timeout(const Duration(seconds: 8));
+          } catch (e) {
+            debugPrint('Firebase startup warning: $e');
+          }
+          """
+          if old not in s:
+              raise SystemExit('Expected legacy driver Firebase block was not found')
+          s = s.replace(old, new)
+          s = s.replace(
+              "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage();",
+              "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage().timeout(const Duration(seconds: 4), onTimeout: () => null);",
+          )
+          s = s.replace(
+              "await NotificationHelper.initialize(flutterLocalNotificationsPlugin);",
+              "await NotificationHelper.initialize(flutterLocalNotificationsPlugin).timeout(const Duration(seconds: 4));",
+          )
+          p.write_text(s)
+
+          p = Path('lib/feature/splash/screens/splash_screen.dart')
+          s = p.read_text()
+          if "backgroundColor: Colors.white" not in s:
+              s = s.replace("return Scaffold(" + chr(10) + "      key: _globalKey,", "return Scaffold(" + chr(10) + "      key: _globalKey," + chr(10) + "      backgroundColor: Colors.white,", 1)
+          p.write_text(s)
+
+          p = Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text().replace('android:value="stackfood"', 'android:value="clickndine_driver"')
+          p.write_text(s)
+          PY
+
+          cat > android/app/src/main/res/drawable/launch_background.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@android:color/white" />
+              <item><bitmap android:gravity="center" android:src="@mipmap/ic_launcher" /></item>
+          </layer-list>
+          XML
+          mkdir -p android/app/src/main/res/drawable-v21
+          cp android/app/src/main/res/drawable/launch_background.xml android/app/src/main/res/drawable-v21/launch_background.xml
+
+          cat > android/app/src/main/res/values/styles.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@drawable/launch_background</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@android:color/white</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          XML
+          mkdir -p android/app/src/main/res/values-night android/app/src/main/res/values-v31
+          cp android/app/src/main/res/values/styles.xml android/app/src/main/res/values-night/styles.xml
+          cat > android/app/src/main/res/values-v31/styles.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowSplashScreenBackground">@android:color/white</item>
+                  <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@android:color/white</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          XML
+
+          python3 - <<'PY'
+          from pathlib import Path
+          main = Path('lib/main.dart').read_text()
+          splash = Path('lib/feature/splash/screens/splash_screen.dart').read_text()
+          assert "stackmart-500c7" not in main
+          assert "Firebase.initializeApp().timeout" in main
+          assert "getInitialMessage().timeout" in main
+          assert "backgroundColor: Colors.white" in splash
+          assert "Theme.Black" not in Path('android/app/src/main/res/values/styles.xml').read_text()
+          assert "Theme.Black" not in Path('android/app/src/main/res/values-night/styles.xml').read_text()
+          print('Driver startup and splash fixes verified.')
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
