@@ -47,19 +47,7 @@ jobs:
           if "package:flutter/services.dart" not in s:
               s = s.replace("import 'package:flutter/material.dart';", "import 'package:flutter/material.dart';" + chr(10) + "import 'package:flutter/services.dart';")
 
-          old = """  if(GetPlatform.isAndroid) {
-            await Firebase.initializeApp(
-              options: const FirebaseOptions(
-                apiKey: 'AIzaSyBKO1ReSpkl1H53oczHBdgCgcChAe3sE9g',
-                appId: '1:491987943015:android:a6fb4303cc4bf3d18f1ec2',
-                messagingSenderId: '491987943015',
-                projectId: 'stackmart-500c7',
-              ),
-            );
-          } else {
-            await Firebase.initializeApp();
-          }
-          """
+          import re
           new = """  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
             statusBarColor: Colors.white,
             statusBarIconBrightness: Brightness.dark,
@@ -75,9 +63,11 @@ jobs:
             debugPrint('Firebase startup warning: $e');
           }
           """
-          if old not in s:
-              raise SystemExit('Expected legacy driver Firebase block was not found')
-          s = s.replace(old, new)
+          pattern = r"\s*if\s*\(GetPlatform\.isAndroid\)\s*\{.*?await\s+Firebase\.initializeApp\(\);\s*\n\s*\}"
+          s2, count = re.subn(pattern, chr(10) + new, s, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('Could not locate the driver Firebase startup block')
+          s = s2
           s = s.replace(
               "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage();",
               "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage().timeout(const Duration(seconds: 4), onTimeout: () => null);",
