@@ -253,6 +253,40 @@ jobs:
           print("Startup and splash fixes verified.")
           PY
 
+      - name: Fix checkout saved address fallback
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('lib/features/address/controllers/address_controller.dart')
+          s = p.read_text().replace(
+              "AddressModel? addressModel = _addressList!.firstWhere((address) => address.isDefault!);",
+              "AddressModel addressModel = _addressList!.firstWhere((address) => address.isDefault ?? false, orElse: () => _addressList!.first);"
+          )
+          p.write_text(s)
+
+          p = Path('lib/features/checkout/widgets/delivery_section.dart')
+          s = p.read_text().replace(
+              "AddressModel? addressModel = Get.find<AddressController>().addressList!.firstWhere((address) => address.isDefault!);",
+              "AddressModel addressModel = Get.find<AddressController>().addressList!.firstWhere((address) => address.isDefault ?? false, orElse: () => Get.find<AddressController>().addressList!.first);"
+          )
+          p.write_text(s)
+
+          p = Path('lib/features/address/domain/models/address_model.dart')
+          s = p.read_text().replace(
+              "isDefault = json['is_default'];",
+              "isDefault = json['is_default'] == true || json['is_default'] == 1 || json['is_default'] == '1';"
+          )
+          p.write_text(s)
+
+          assert "orElse: () => _addressList!.first" in Path('lib/features/address/controllers/address_controller.dart').read_text()
+          assert "orElse: () => Get.find<AddressController>().addressList!.first" in Path('lib/features/checkout/widgets/delivery_section.dart').read_text()
+          print("Checkout saved-address fallback applied.")
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
