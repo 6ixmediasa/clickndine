@@ -11,7 +11,7 @@ on:
       - 'branding/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-web:
@@ -622,6 +622,39 @@ jobs:
           cd deployment/web-root
           zip -qr ../../ClicKnDine-Flutter-Web-Subdomain-Root.zip .
           du -h ../../ClicKnDine-Flutter-Web-Subdomain-Root.zip
+
+      - name: Publish browsable customer Flutter source to GitHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p source/customer_flutter
+          rsync -a --delete \
+            --exclude='.dart_tool/' --exclude='build/' \
+            --exclude='.gradle/' --exclude='.git/' \
+            --exclude='*.jks' --exclude='*.keystore' \
+            --exclude='key.properties' --exclude='.env' \
+            --exclude='*.log' --exclude='*.stackdump' \
+            app/ source/customer_flutter/
+          cat > source/customer_flutter/SOURCE_README.md <<'README'
+          # ClicKnDine Customer Flutter Source
+          This is the browsable Flutter customer app source used to build
+          the Android client and browser customer frontend.
+          API: https://click.6ixmediasa.com
+          Browser: https://app.6ixmediasa.com
+          Android package: com.sixmediasa.clickndine
+
+          Run flutter pub get, then flutter build web --release --base-href /
+          for the web frontend. Configure Firebase Web app values via
+          FIREBASE_WEB_APP_ID / FIREBASE_WEB_API_KEY and the browser key
+          in web/maps-config.js. Android production builds need release signing.
+          README
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A source/customer_flutter
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish readable ClicKnDine Flutter customer source"
+            git push origin HEAD:main
+          fi
 
       - name: Upload browser app
         uses: actions/upload-artifact@v4
