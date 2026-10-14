@@ -338,7 +338,7 @@ jobs:
           replacement = chr(10).join([
               "          final String callback = '$protocol//$hostname/app${RouteHelper.orderSuccess}?id=$orderID&amount=$amount';",
               "          final String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID&customer_id=${Get.find<ProfileController>().userInfoModel?.id ?? Get.find<AuthController>().getGuestId()}'",
-              "              '&payment_method=${Uri.encodeQueryComponent(digitalPaymentName)}&payment_platform=web&callback=${Uri.encodeQueryComponent(callback)}';",
+              "              '&payment_method=${Uri.encodeQueryComponent(digitalPaymentName ?? 'paystack')}&payment_platform=web&callback=${Uri.encodeQueryComponent(callback)}';",
               "          html.window.open(selectedUrl, '_self');",
           ])
           s = s[:a] + replacement + s[b:]
