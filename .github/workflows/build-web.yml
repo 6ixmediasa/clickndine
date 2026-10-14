@@ -653,6 +653,8 @@ jobs:
           git add -A source/customer_flutter
           if ! git diff --cached --quiet; then
             git commit -m "Publish readable ClicKnDine Flutter customer source"
+            git fetch origin main
+            git rebase origin/main
             git push origin HEAD:main
           fi
 
