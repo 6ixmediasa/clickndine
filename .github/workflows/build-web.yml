@@ -484,6 +484,68 @@ jobs:
           print('Browser location picker, zone verification and Maps loader updated')
           PY
 
+      - name: Fix mobile browser terms consent
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('lib/features/auth/widgets/trams_conditions_check_box_widget.dart')
+          s=p.read_text()
+          s=s.replace("""      fromSignUp || fromDmRegistration ? Checkbox(""", """      Checkbox(""")
+          s=s.replace("""      ) : const SizedBox(),
+
+      fromSignUp || fromDmRegistration ? const SizedBox() : Text( '* ', style: robotoRegular.copyWith(color: Theme.of(context).hintColor)),""", """      ),""",1)
+          s=s.replace("""        value: fromDmRegistration ? deliverymanRegistrationController?.acceptTerms : authController?.acceptTerms,""", """        value: fromDmRegistration ? deliverymanRegistrationController?.acceptTerms ?? false : authController?.acceptTerms ?? false,""")
+          original="""        child: RichText(
+          text: TextSpan(children: ["""
+          new="""        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => fromDmRegistration
+              ? deliverymanRegistrationController?.toggleTerms()
+              : authController?.toggleTerms(),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+            child: RichText(
+          text: TextSpan(children: ["""
+          assert original in s, 'Terms text container not found'
+          s=s.replace(original,new,1)
+          original="""          ]),
+        ),
+      ),
+
+    ]);"""
+          new="""          ]),
+            ),
+          ),
+        ),
+      ),
+
+    ]);"""
+          assert original in s, 'Terms text close not found'
+          s=s.replace(original,new,1)
+          p.write_text(s)
+
+          # Explicit opt-in: users can now tap checkbox or agreement text on mobile.
+          p=Path('lib/features/auth/controllers/auth_controller.dart')
+          s=p.read_text().replace("bool _acceptTerms = true;", "bool _acceptTerms = false;", 1)
+          p.write_text(s)
+
+          p=Path('lib/features/auth/widgets/sign_in/manual_login_widget.dart')
+          s=p.read_text().replace("onPressed: onClickLoginButton,", "onPressed: authController.acceptTerms ? onClickLoginButton : null,")
+          p.write_text(s)
+
+          p=Path('lib/features/auth/widgets/sign_in/otp_login_widget.dart')
+          s=p.read_text().replace("onPressed: onClickLoginButton,", "onPressed: authController.acceptTerms ? onClickLoginButton : null,")
+          p.write_text(s)
+
+          assert "child: InkWell(" in Path('lib/features/auth/widgets/trams_conditions_check_box_widget.dart').read_text()
+          assert "bool _acceptTerms = false;" in Path('lib/features/auth/controllers/auth_controller.dart').read_text()
+          print('Clickable mobile terms checkbox, label and explicit consent enabled.')
+          PY
+
       - name: Install dependencies
         working-directory: app
         run: flutter pub get
