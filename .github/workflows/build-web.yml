@@ -1,4 +1,4 @@
-name: Build ClicKnDine Flutter Web
+name: Build ClicKnDine Flutter Web - Subdomain
 
 on:
   workflow_dispatch:
@@ -336,7 +336,7 @@ jobs:
           end_line = "          html.window.open(selectedUrl,\"_self\");"
           b = s.index(end_line, a) + len(end_line)
           replacement = chr(10).join([
-              "          final String callback = '$protocol//$hostname/app${RouteHelper.orderSuccess}?id=$orderID&amount=$amount';",
+              "          final String callback = '${Uri.base.origin}${RouteHelper.orderSuccess}?id=$orderID&amount=$amount&status=';",
               "          final String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID&customer_id=${Get.find<ProfileController>().userInfoModel?.id ?? Get.find<AuthController>().getGuestId()}'",
               "              '&payment_method=${Uri.encodeQueryComponent(digitalPaymentName ?? 'paystack')}&payment_platform=web&callback=${Uri.encodeQueryComponent(callback)}';",
               "          html.window.open(selectedUrl, '_self');",
@@ -368,7 +368,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          flutter build web --release --base-href /app/ --no-tree-shake-icons \
+          flutter build web --release --base-href / --no-tree-shake-icons \
             --dart-define="FIREBASE_WEB_APP_ID=${FIREBASE_WEB_APP_ID:-}" \
             --dart-define="FIREBASE_WEB_API_KEY=${FIREBASE_WEB_API_KEY:-}"
 
@@ -376,29 +376,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p deployment/public/app
-          cp -a app/build/web/. deployment/public/app/
-          cat > deployment/public/app/.htaccess <<'HTACCESS'
+          mkdir -p deployment/web-root
+          cp -a app/build/web/. deployment/web-root/
+          cat > deployment/web-root/.htaccess <<'HTACCESS'
           DirectoryIndex index.html
           <IfModule mod_rewrite.c>
             RewriteEngine On
-            RewriteBase /app/
+            RewriteBase /
             RewriteCond %{REQUEST_FILENAME} !-f
             RewriteCond %{REQUEST_FILENAME} !-d
             RewriteRule . index.html [L]
           </IfModule>
           HTACCESS
-          cat > deployment/README-ClicKnDine-Web.txt <<'README'
+          cat > deployment/web-root/README-ClicKnDine-Web.txt <<'README'
           ClicKnDine - Flutter Customer Web Build
           ========================================
           This is the genuine Flutter customer app, compiled for the browser.
-          Target URL: https://click.6ixmediasa.com/app/
-          Target web folder: public/app/
+          Target URL: https://app.6ixmediasa.com/
+          Target web folder: the document root configured for app.6ixmediasa.com in cPanel.
 
-          1. Back up your live site.
-          2. Extract this zip in the Laravel ROOT (the folder containing artisan).
-             The public/app directory should be created automatically.
-          3. Visit https://click.6ixmediasa.com/app/
+          1. In cPanel > Domains, locate the Document Root for app.6ixmediasa.com.
+          2. Extract this zip DIRECTLY INTO that document root, NOT the Laravel root.
+             index.html and .htaccess must live directly in the subdomain root.
+          3. Visit https://app.6ixmediasa.com/
           4. Use the ClicKnDine web UI to create a small TEST order and pay via Yoco.
           5. Confirm Yoco payment status with the backend webhook and admin panel.
 
@@ -414,21 +414,22 @@ jobs:
           FIREBASE_WEB_API_KEY. Web push/social/phone auth may not work until then.
           Browser Google Maps can require a separate referrer-restricted JavaScript key.
 
-          If your host uses Nginx, enable SPA fallback to /app/index.html for
-          paths under /app/. Apache/cPanel uses the included .htaccess.
-          If the URL shows Laravel's homepage, verify your site's document root
-          points at the Laravel public directory.
+          If your host uses Nginx, enable SPA fallback to /index.html.
+          Apache/cPanel uses the included .htaccess.
+          This web frontend uses a SEPARATE subdomain from the Laravel API.
+          CORS on click.6ixmediasa.com may need to allow https://app.6ixmediasa.com.
+          The backend stays at https://click.6ixmediasa.com.
           README
-          test -s deployment/public/app/index.html
-          test -s deployment/public/app/main.dart.js
-          cd deployment
-          zip -qr ../ClicKnDine-Flutter-Web-Extract-In-Main.zip .
-          du -h ../ClicKnDine-Flutter-Web-Extract-In-Main.zip
+          test -s deployment/web-root/index.html
+          test -s deployment/web-root/main.dart.js
+          cd deployment/web-root
+          zip -qr ../../ClicKnDine-Flutter-Web-Subdomain-Root.zip .
+          du -h ../../ClicKnDine-Flutter-Web-Subdomain-Root.zip
 
       - name: Upload browser app
         uses: actions/upload-artifact@v4
         with:
-          name: ClicKnDine-Flutter-Web-Extract-In-Main
-          path: ClicKnDine-Flutter-Web-Extract-In-Main.zip
+          name: ClicKnDine-Flutter-Web-Subdomain-Root
+          path: ClicKnDine-Flutter-Web-Subdomain-Root.zip
           if-no-files-found: error
           retention-days: 30
