@@ -1,0 +1,440 @@
+name: Build ClicKnDine Flutter Web
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-web.yml'
+      - 'payload/**'
+      - 'assets_payload/**'
+      - 'branding/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout build payload
+        uses: actions/checkout@v4
+
+      - name: Reconstruct ClicKnDine source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf app /tmp/clickndine
+          mkdir -p app /tmp/clickndine
+          cat payload/chunk_*.b64 | base64 -d > /tmp/clickndine/source.tar.gz
+          tar -xzf /tmp/clickndine/source.tar.gz -C app
+
+          cat assets_payload/chunk_*.b64 | base64 -d > /tmp/clickndine/assets.tar.gz
+          tar -xzf /tmp/clickndine/assets.tar.gz -C app
+
+          echo "Source reconstructed."
+
+      - name: Finalize ClicKnDine branding and missing assets
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+
+          mkdir -p assets/image assets/font
+          base64 -d ../branding/logo.png.b64 > assets/image/logo.png
+          base64 -d ../branding/logo_name.png.b64 > assets/image/logo_name.png
+
+          # The compact payload intentionally uses Flutter's platform font fallback.
+          # Font files are included for future packaging, but no extra pubspec font block
+          # is injected here to keep the manifest valid.
+
+          # Create lightweight fallbacks only for stock animation/oversized assets
+          # omitted from the compact CI payload. The user-provided real static assets
+          # remain untouched.
+          PNG_B64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zs9sAAAAASUVORK5CYII='
+          if [ -f image_asset_names.txt ]; then
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              target="assets/image/$file"
+              [ -f "$target" ] && continue
+              mkdir -p "$(dirname "$target")"
+              case "$file" in
+                *.svg|*.SVG)
+                  cat > "$target" <<'SVG'
+          <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+            <rect width="512" height="512" rx="48" fill="#fff"/>
+            <circle cx="256" cy="256" r="150" fill="#ED1C24" opacity=".12"/>
+            <circle cx="256" cy="256" r="70" fill="#ED1C24"/>
+          </svg>
+          SVG
+                  ;;
+                *)
+                  printf '%s' "$PNG_B64" | base64 -d > "$target"
+                  ;;
+              esac
+            done < image_asset_names.txt
+          fi
+
+          # Android launcher and notification assets use the supplied ClicKnDine logo.
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p "android/app/src/main/res/mipmap-$density"
+            cp assets/image/logo.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+          mkdir -p android/app/src/main/res/drawable android/app/src/main/res/raw
+          cp assets/image/logo.png android/app/src/main/res/drawable/notification_icon.png
+
+          # Safe local notification sound fallback.
+          python3 - <<'PY'
+          import wave
+          with wave.open('android/app/src/main/res/raw/notification.wav', 'wb') as w:
+              w.setnchannels(1)
+              w.setsampwidth(2)
+              w.setframerate(8000)
+              w.writeframes(b'\x00\x00' * 800)
+          PY
+
+          # Configure the ClicKnDine Android package and Google Maps key.
+          sed -i 's/applicationId = "com.sixamtech.stackfooduser"/applicationId = "com.sixmediasa.clickndine"/' android/app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          import re
+          s=re.sub(r'(<meta-data android:name="com\.google\.android\.geo\.API_KEY"\s*android:value=")[^"]+(")', r'\g<1>AIzaSyBKO1ReSpkl1H53oczHBdgCgcChAe3sE9g\2', s)
+          p.write_text(s)
+          PY
+
+          # Install the final Firebase config containing both ClicKnDine Android apps.
+          base64 -d ../branding/google-services.json.b64 > android/app/google-services.json
+
+          echo "Branding finalized."
+
+      - name: Fix Firebase startup and white splash
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('lib/main.dart')
+          s = p.read_text()
+
+          if "package:flutter/services.dart" not in s:
+              lines = s.splitlines()
+              idx = lines.index("import 'package:flutter/material.dart';")
+              lines.insert(idx + 1, "import 'package:flutter/services.dart';")
+              s = chr(10).join(lines) + chr(10)
+
+          old = """  }else if(GetPlatform.isAndroid) {
+            await Firebase.initializeApp(
+              options: const FirebaseOptions(
+                apiKey: 'AIzaSyCc3OCd5I2xSlnftZ4bFAbuCzMhgQHLivA',
+                appId: '1:491987943015:android:fe79b69339834d5c8f1ec2',
+                messagingSenderId: '491987943015',
+                projectId: 'stackmart-500c7',
+              ),
+            );
+          } else {
+            await Firebase.initializeApp();
+          }
+          """
+          new = """  } else {
+            // Use the Firebase project configured by google-services.json / GoogleService-Info.plist.
+            await Firebase.initializeApp();
+          }
+          """
+
+          if old in s:
+              s = s.replace(old, new)
+          else:
+              replacement = (
+                  "} else {" + chr(10)
+                  + "    // Use the Firebase project configured by google-services.json / GoogleService-Info.plist." + chr(10)
+                  + "    await Firebase.initializeApp();" + chr(10)
+                  + "  }"
+              )
+              s = re.sub(
+                  r"\}\s*else if\(GetPlatform\.isAndroid\)\s*\{.*?projectId:\s*'stackmart-500c7',.*?\n\s*\),\s*\n\s*\);\s*\n\s*\}\s*else\s*\{\s*\n\s*await Firebase\.initializeApp\(\);\s*\n\s*\}",
+                  lambda _: replacement,
+                  s,
+                  count=1,
+                  flags=re.S,
+              )
+
+          if "SystemChrome.setSystemUIOverlayStyle" not in s:
+              ui = """  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+            statusBarColor: Colors.white,
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
+            systemNavigationBarColor: Colors.white,
+            systemNavigationBarIconBrightness: Brightness.dark,
+          ));
+
+          DeepLinkBody? linkBody;"""
+              s = s.replace("  DeepLinkBody? linkBody;", ui, 1)
+
+          s = s.replace(
+              "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage();",
+              "final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage().timeout(const Duration(seconds: 4), onTimeout: () => null);",
+          )
+          s = s.replace(
+              "await NotificationHelper.initialize(flutterLocalNotificationsPlugin);",
+              "await NotificationHelper.initialize(flutterLocalNotificationsPlugin).timeout(const Duration(seconds: 4));",
+          )
+          p.write_text(s)
+
+          p = Path('lib/features/splash/screens/splash_screen.dart')
+          s = p.read_text()
+          if "backgroundColor: Colors.white" not in s:
+              s = s.replace("return Scaffold(", "return Scaffold(" + chr(10) + "      backgroundColor: Colors.white,", 1)
+          p.write_text(s)
+          PY
+
+          cat > android/app/src/main/res/drawable/launch_background.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@android:color/white" />
+              <item><bitmap android:gravity="center" android:src="@mipmap/ic_launcher" /></item>
+          </layer-list>
+          XML
+          mkdir -p android/app/src/main/res/drawable-v21
+          cp android/app/src/main/res/drawable/launch_background.xml android/app/src/main/res/drawable-v21/launch_background.xml
+
+          cat > android/app/src/main/res/values/styles.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@drawable/launch_background</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@android:color/white</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          XML
+          mkdir -p android/app/src/main/res/values-night android/app/src/main/res/values-v31
+          cp android/app/src/main/res/values/styles.xml android/app/src/main/res/values-night/styles.xml
+          cat > android/app/src/main/res/values-v31/styles.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowSplashScreenBackground">@android:color/white</item>
+                  <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@android:color/white</item>
+                  <item name="android:statusBarColor">@android:color/white</item>
+                  <item name="android:navigationBarColor">@android:color/white</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          XML
+
+          python3 - <<'PY'
+          from pathlib import Path
+          main=Path('lib/main.dart').read_text()
+          splash=Path('lib/features/splash/screens/splash_screen.dart').read_text()
+          assert "AIzaSyCc3OCd5I2xSlnftZ4bFAbuCzMhgQHLivA" not in main, "old Android Firebase project still present"
+          assert "getInitialMessage().timeout" in main, "notification startup timeout not applied"
+          assert "backgroundColor: Colors.white" in splash, "white Flutter splash not applied"
+          print("Startup and splash fixes verified.")
+          PY
+
+      - name: Fix checkout saved address fallback
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('lib/features/address/controllers/address_controller.dart')
+          s = p.read_text().replace(
+              "AddressModel? addressModel = _addressList!.firstWhere((address) => address.isDefault!);",
+              "AddressModel addressModel = _addressList!.firstWhere((address) => address.isDefault ?? false, orElse: () => _addressList!.first);"
+          )
+          p.write_text(s)
+
+          p = Path('lib/features/checkout/widgets/delivery_section.dart')
+          s = p.read_text().replace(
+              "AddressModel? addressModel = Get.find<AddressController>().addressList!.firstWhere((address) => address.isDefault!);",
+              "AddressModel addressModel = Get.find<AddressController>().addressList!.firstWhere((address) => address.isDefault ?? false, orElse: () => Get.find<AddressController>().addressList!.first);"
+          )
+          p.write_text(s)
+
+          p = Path('lib/features/address/domain/models/address_model.dart')
+          s = p.read_text().replace(
+              "isDefault = json['is_default'];",
+              "isDefault = json['is_default'] == true || json['is_default'] == 1 || json['is_default'] == '1';"
+          )
+          p.write_text(s)
+
+          assert "orElse: () => _addressList!.first" in Path('lib/features/address/controllers/address_controller.dart').read_text()
+          assert "orElse: () => Get.find<AddressController>().addressList!.first" in Path('lib/features/checkout/widgets/delivery_section.dart').read_text()
+          print("Checkout saved-address fallback applied.")
+          PY
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Generate missing Flutter web platform
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter create --platforms web --project-name stackfood_multivendor .
+
+      - name: Configure Flutter web deployment and payment return
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('lib/main.dart')
+          s=p.read_text()
+          webstart=s.index("  if(GetPlatform.isWeb) {")
+          webend=s.index("  } else {",webstart)
+          s=s[:webstart]+"""  if (GetPlatform.isWeb) {
+    // Web Firebase is opt-in: do not initialize the old Stackmart project.
+    // Set up a Firebase Web App and provide its ID using --dart-define later.
+    const String webAppId = String.fromEnvironment('FIREBASE_WEB_APP_ID');
+    const String webApiKey = String.fromEnvironment('FIREBASE_WEB_API_KEY');
+    if (webAppId.isNotEmpty && webApiKey.isNotEmpty) {
+      await Firebase.initializeApp(options: const FirebaseOptions(
+        apiKey: webApiKey,
+        authDomain: 'clickndine-eace9.firebaseapp.com',
+        projectId: 'clickndine-eace9',
+        storageBucket: 'clickndine-eace9.firebasestorage.app',
+        messagingSenderId: '35696305466',
+        appId: webAppId,
+      ));
+    }
+"""+s[webend:]
+          p.write_text(s)
+
+          p=Path('lib/features/checkout/controllers/checkout_controller.dart')
+          s=p.read_text()
+          before="""          String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID&customer_id=${Get.find<ProfileController>().userInfoModel?.id ?? Get.find<AuthController>().getGuestId()}'
+              '&payment_method=$digitalPaymentName&payment_platform=web&&callback=$protocol//$hostname${RouteHelper.orderSuccess}?id=$orderID&amount=$amount&status=';
+          html.window.open(selectedUrl,"_self");"""
+          after="""          final String callback = '$protocol//$hostname/app${RouteHelper.orderSuccess}?id=$orderID&amount=$amount';
+          final String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID&customer_id=${Get.find<ProfileController>().userInfoModel?.id ?? Get.find<AuthController>().getGuestId()}'
+              '&payment_method=${Uri.encodeQueryComponent(digitalPaymentName)}&payment_platform=web&callback=${Uri.encodeQueryComponent(callback)}';
+          html.window.open(selectedUrl, '_self');"""
+          if before not in s:
+              raise SystemExit("Web Yoco payment callback block did not match the ClicKnDine source")
+          s=s.replace(before,after)
+          p.write_text(s)
+
+          p=Path('web/index.html')
+          s=p.read_text()
+          s=s.replace('<title>stackfood_multivendor</title>','<title>ClicKnDine | Order Food Online</title>')
+          s=s.replace('<meta name="description" content="A new Flutter project.">','<meta name="description" content="ClicKnDine - order meals from local restaurants.">')
+          p.write_text(s)
+
+          icon=Path('assets/image/logo.png').read_bytes()
+          Path('web/favicon.png').write_bytes(icon)
+          Path('web/icons').mkdir(exist_ok=True)
+          Path('web/icons/Icon-192.png').write_bytes(icon)
+          Path('web/icons/Icon-512.png').write_bytes(icon)
+
+          # Keep path-style Flutter routing with a matching Apache SPA fallback.
+          assert 'usePathUrlStrategy()' in Path('lib/main.dart').read_text()
+          assert 'Uri.encodeQueryComponent(callback)' in Path('lib/features/checkout/controllers/checkout_controller.dart').read_text()
+          print('ClicKnDine web settings and Yoco return URL patched')
+          PY
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build production Flutter web
+        working-directory: app
+        env:
+          FIREBASE_WEB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+          FIREBASE_WEB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build web --release --base-href /app/ --no-tree-shake-icons \
+            --dart-define="FIREBASE_WEB_APP_ID=${FIREBASE_WEB_APP_ID:-}" \
+            --dart-define="FIREBASE_WEB_API_KEY=${FIREBASE_WEB_API_KEY:-}"
+
+      - name: Package cPanel upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p deployment/public/app
+          cp -a app/build/web/. deployment/public/app/
+          cat > deployment/public/app/.htaccess <<'HTACCESS'
+          DirectoryIndex index.html
+          <IfModule mod_rewrite.c>
+            RewriteEngine On
+            RewriteBase /app/
+            RewriteCond %{REQUEST_FILENAME} !-f
+            RewriteCond %{REQUEST_FILENAME} !-d
+            RewriteRule . index.html [L]
+          </IfModule>
+          HTACCESS
+          cat > deployment/README-ClicKnDine-Web.txt <<'README'
+          ClicKnDine - Flutter Customer Web Build
+          ========================================
+          This is the genuine Flutter customer app, compiled for the browser.
+          Target URL: https://click.6ixmediasa.com/app/
+          Target web folder: public/app/
+
+          1. Back up your live site.
+          2. Extract this zip in the Laravel ROOT (the folder containing artisan).
+             The public/app directory should be created automatically.
+          3. Visit https://click.6ixmediasa.com/app/
+          4. Use the ClicKnDine web UI to create a small TEST order and pay via Yoco.
+          5. Confirm Yoco payment status with the backend webhook and admin panel.
+
+          IMPORTANT
+          ---------
+          The web app reuses the real backend at https://click.6ixmediasa.com.
+          Live payments charge real cards. Never enter test-card details in live mode.
+          The Flutter web login uses the backend's existing API.
+
+          Firebase Web App details were not supplied. To enable browser Firebase features
+          in a future rebuild, register a WEB app in Firebase project clickndine-eace9
+          and configure GitHub Actions variables FIREBASE_WEB_APP_ID and
+          FIREBASE_WEB_API_KEY. Web push/social/phone auth may not work until then.
+          Browser Google Maps can require a separate referrer-restricted JavaScript key.
+
+          If your host uses Nginx, enable SPA fallback to /app/index.html for
+          paths under /app/. Apache/cPanel uses the included .htaccess.
+          If the URL shows Laravel's homepage, verify your site's document root
+          points at the Laravel public directory.
+          README
+          test -s deployment/public/app/index.html
+          test -s deployment/public/app/main.dart.js
+          cd deployment
+          zip -qr ../ClicKnDine-Flutter-Web-Extract-In-Main.zip .
+          du -h ../ClicKnDine-Flutter-Web-Extract-In-Main.zip
+
+      - name: Upload browser app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClicKnDine-Flutter-Web-Extract-In-Main
+          path: ClicKnDine-Flutter-Web-Extract-In-Main.zip
+          if-no-files-found: error
+          retention-days: 30
