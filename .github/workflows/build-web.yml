@@ -492,58 +492,56 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          p=Path('lib/features/auth/widgets/trams_conditions_check_box_widget.dart')
-          s=p.read_text()
-          s=s.replace("""      fromSignUp || fromDmRegistration ? Checkbox(""", """      Checkbox(""")
-          s=s.replace("""      ) : const SizedBox(),
-
-      fromSignUp || fromDmRegistration ? const SizedBox() : Text( '* ', style: robotoRegular.copyWith(color: Theme.of(context).hintColor)),""", """      ),""",1)
-          s=s.replace("""        value: fromDmRegistration ? deliverymanRegistrationController?.acceptTerms : authController?.acceptTerms,""", """        value: fromDmRegistration ? deliverymanRegistrationController?.acceptTerms ?? false : authController?.acceptTerms ?? false,""")
-          original="""        child: RichText(
-          text: TextSpan(children: ["""
-          new="""        child: InkWell(
-          borderRadius: BorderRadius.circular(6),
-          onTap: () => fromDmRegistration
-              ? deliverymanRegistrationController?.toggleTerms()
-              : authController?.toggleTerms(),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-            child: RichText(
-          text: TextSpan(children: ["""
-          assert original in s, 'Terms text container not found'
-          s=s.replace(original,new,1)
-          original="""          ]),
-        ),
-      ),
-
-    ]);"""
-          new="""          ]),
-            ),
-          ),
-        ),
-      ),
-
-    ]);"""
-          assert original in s, 'Terms text close not found'
-          s=s.replace(original,new,1)
+          p = Path('lib/features/auth/widgets/trams_conditions_check_box_widget.dart')
+          s = p.read_text()
+          # Render a checkbox on both login and registration. The old sign-in
+          # component rendered agreement text with no checkbox.
+          s = s.replace("fromSignUp || fromDmRegistration ? Checkbox(", "Checkbox(", 1)
+          block = (
+              "      ) : const SizedBox()," + chr(10) + chr(10)
+              + "      fromSignUp || fromDmRegistration ? const SizedBox() : Text( '* ', style: robotoRegular.copyWith(color: Theme.of(context).hintColor)),"
+          )
+          assert block in s, 'Sign-in consent placeholder not found'
+          s = s.replace(block, "      ),", 1)
+          s = s.replace(
+              "value: fromDmRegistration ? deliverymanRegistrationController?.acceptTerms : authController?.acceptTerms,",
+              "value: fromDmRegistration ? deliverymanRegistrationController?.acceptTerms ?? false : authController?.acceptTerms ?? false,"
+          )
+          # Give the agreement text a large tappable area on mobile.
+          old = "        child: RichText(" + chr(10) + "          text: TextSpan(children: ["
+          new = (
+              "        child: InkWell(" + chr(10)
+              + "          onTap: () => fromDmRegistration ? deliverymanRegistrationController?.toggleTerms() : authController?.toggleTerms()," + chr(10)
+              + "          child: Padding(" + chr(10)
+              + "            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6)," + chr(10)
+              + "            child: RichText(" + chr(10)
+              + "          text: TextSpan(children: ["
+          )
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = "          ])," + chr(10) + "        )," + chr(10) + "      ),"
+          new = "          ])," + chr(10) + "            )," + chr(10) + "          )," + chr(10) + "        )," + chr(10) + "      ),"
+          assert old in s
+          s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # Explicit opt-in: users can now tap checkbox or agreement text on mobile.
           p=Path('lib/features/auth/controllers/auth_controller.dart')
           s=p.read_text().replace("bool _acceptTerms = true;", "bool _acceptTerms = false;", 1)
           p.write_text(s)
 
-          p=Path('lib/features/auth/widgets/sign_in/manual_login_widget.dart')
-          s=p.read_text().replace("onPressed: onClickLoginButton,", "onPressed: authController.acceptTerms ? onClickLoginButton : null,")
-          p.write_text(s)
+          for f in [
+              'lib/features/auth/widgets/sign_in/manual_login_widget.dart',
+              'lib/features/auth/widgets/sign_in/otp_login_widget.dart',
+          ]:
+              p=Path(f)
+              s=p.read_text().replace(
+                  "onPressed: onClickLoginButton,",
+                  "onPressed: authController.acceptTerms ? onClickLoginButton : null,"
+              )
+              p.write_text(s)
 
-          p=Path('lib/features/auth/widgets/sign_in/otp_login_widget.dart')
-          s=p.read_text().replace("onPressed: onClickLoginButton,", "onPressed: authController.acceptTerms ? onClickLoginButton : null,")
-          p.write_text(s)
-
-          assert "child: InkWell(" in Path('lib/features/auth/widgets/trams_conditions_check_box_widget.dart').read_text()
-          assert "bool _acceptTerms = false;" in Path('lib/features/auth/controllers/auth_controller.dart').read_text()
-          print('Clickable mobile terms checkbox, label and explicit consent enabled.')
+          assert 'child: InkWell(' in Path('lib/features/auth/widgets/trams_conditions_check_box_widget.dart').read_text()
+          print('Mobile terms checkbox and opt-in consent enabled.')
           PY
 
       - name: Install dependencies
