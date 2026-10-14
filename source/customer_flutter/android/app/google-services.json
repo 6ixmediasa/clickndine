@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "35696305466",
+    "firebase_url": "https://clickndine-eace9-default-rtdb.firebaseio.com",
+    "project_id": "clickndine-eace9",
+    "storage_bucket": "clickndine-eace9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:35696305466:android:33a27bb9236b96f3fcdc03",
+        "android_client_info": {
+          "package_name": "com.sixmediasa.clickndine"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCn3SP_MDcK__4j0JMIIg54oQp2VgUL36k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:35696305466:android:7153ec055573cf70fcdc03",
+        "android_client_info": {
+          "package_name": "com.sixmediasa.clickndine.driver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCn3SP_MDcK__4j0JMIIg54oQp2VgUL36k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
