@@ -299,67 +299,61 @@ jobs:
           set -euo pipefail
           flutter create --platforms web --project-name stackfood_multivendor .
 
-      - name: Configure Flutter web deployment and payment return
+      - name: Configure browser Firebase and payment callback
         working-directory: app
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
-          p=Path('lib/main.dart')
-          s=p.read_text()
-          webstart=s.index("  if(GetPlatform.isWeb) {")
-          webend=s.index("  } else {",webstart)
-          s=s[:webstart]+"""  if (GetPlatform.isWeb) {
-    // Web Firebase is opt-in: do not initialize the old Stackmart project.
-    // Set up a Firebase Web App and provide its ID using --dart-define later.
-    const String webAppId = String.fromEnvironment('FIREBASE_WEB_APP_ID');
-    const String webApiKey = String.fromEnvironment('FIREBASE_WEB_API_KEY');
-    if (webAppId.isNotEmpty && webApiKey.isNotEmpty) {
-      await Firebase.initializeApp(options: const FirebaseOptions(
-        apiKey: webApiKey,
-        authDomain: 'clickndine-eace9.firebaseapp.com',
-        projectId: 'clickndine-eace9',
-        storageBucket: 'clickndine-eace9.firebasestorage.app',
-        messagingSenderId: '35696305466',
-        appId: webAppId,
-      ));
-    }
-"""+s[webend:]
+          p = Path('lib/main.dart')
+          s = p.read_text()
+          a = s.index("  if(GetPlatform.isWeb) {")
+          b = s.index("  } else {", a)
+          replacement = chr(10).join([
+              "  if (GetPlatform.isWeb) {",
+              "    // Firebase Web is optional until the ClicKnDine Web App is registered.",
+              "    const String appId = String.fromEnvironment('FIREBASE_WEB_APP_ID');",
+              "    const String apiKey = String.fromEnvironment('FIREBASE_WEB_API_KEY');",
+              "    if (appId.isNotEmpty && apiKey.isNotEmpty) {",
+              "      await Firebase.initializeApp(options: const FirebaseOptions(",
+              "        apiKey: apiKey,",
+              "        authDomain: 'clickndine-eace9.firebaseapp.com',",
+              "        projectId: 'clickndine-eace9',",
+              "        storageBucket: 'clickndine-eace9.firebasestorage.app',",
+              "        messagingSenderId: '35696305466',",
+              "        appId: appId,",
+              "      ));",
+              "    }",
+          ])
+          s = s[:a] + replacement + chr(10) + s[b:]
           p.write_text(s)
 
-          p=Path('lib/features/checkout/controllers/checkout_controller.dart')
-          s=p.read_text()
-          before="""          String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID&customer_id=${Get.find<ProfileController>().userInfoModel?.id ?? Get.find<AuthController>().getGuestId()}'
-              '&payment_method=$digitalPaymentName&payment_platform=web&&callback=$protocol//$hostname${RouteHelper.orderSuccess}?id=$orderID&amount=$amount&status=';
-          html.window.open(selectedUrl,"_self");"""
-          after="""          final String callback = '$protocol//$hostname/app${RouteHelper.orderSuccess}?id=$orderID&amount=$amount';
-          final String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID&customer_id=${Get.find<ProfileController>().userInfoModel?.id ?? Get.find<AuthController>().getGuestId()}'
-              '&payment_method=${Uri.encodeQueryComponent(digitalPaymentName)}&payment_platform=web&callback=${Uri.encodeQueryComponent(callback)}';
-          html.window.open(selectedUrl, '_self');"""
-          if before not in s:
-              raise SystemExit("Web Yoco payment callback block did not match the ClicKnDine source")
-          s=s.replace(before,after)
+          p = Path('lib/features/checkout/controllers/checkout_controller.dart')
+          s = p.read_text()
+          a = s.index("          String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID")
+          end_line = "          html.window.open(selectedUrl,\"_self\");"
+          b = s.index(end_line, a) + len(end_line)
+          replacement = chr(10).join([
+              "          final String callback = '$protocol//$hostname/app${RouteHelper.orderSuccess}?id=$orderID&amount=$amount';",
+              "          final String selectedUrl = '${AppConstants.baseUrl}/payment-mobile?order_id=$orderID&customer_id=${Get.find<ProfileController>().userInfoModel?.id ?? Get.find<AuthController>().getGuestId()}'",
+              "              '&payment_method=${Uri.encodeQueryComponent(digitalPaymentName)}&payment_platform=web&callback=${Uri.encodeQueryComponent(callback)}';",
+              "          html.window.open(selectedUrl, '_self');",
+          ])
+          s = s[:a] + replacement + s[b:]
           p.write_text(s)
 
-          p=Path('web/index.html')
-          s=p.read_text()
-          s=s.replace('<title>stackfood_multivendor</title>','<title>ClicKnDine | Order Food Online</title>')
-          s=s.replace('<meta name="description" content="A new Flutter project.">','<meta name="description" content="ClicKnDine - order meals from local restaurants.">')
+          p = Path('web/index.html')
+          s = p.read_text().replace('stackfood_multivendor', 'ClicKnDine')
           p.write_text(s)
-
-          icon=Path('assets/image/logo.png').read_bytes()
+          icon = Path('assets/image/logo.png').read_bytes()
           Path('web/favicon.png').write_bytes(icon)
           Path('web/icons').mkdir(exist_ok=True)
           Path('web/icons/Icon-192.png').write_bytes(icon)
           Path('web/icons/Icon-512.png').write_bytes(icon)
-
-          # Keep path-style Flutter routing with a matching Apache SPA fallback.
-          assert 'usePathUrlStrategy()' in Path('lib/main.dart').read_text()
           assert 'Uri.encodeQueryComponent(callback)' in Path('lib/features/checkout/controllers/checkout_controller.dart').read_text()
-          print('ClicKnDine web settings and Yoco return URL patched')
+          print('Browser configuration and Yoco callback updated')
           PY
 
       - name: Install dependencies
