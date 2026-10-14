@@ -378,6 +378,37 @@ jobs:
           print('Visible driver bootstrap installed.')
           PY
 
+      - name: Publish browsable driver Flutter source to GitHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p source/driver_flutter
+          rsync -a --delete \
+            --exclude='.dart_tool/' --exclude='build/' \
+            --exclude='.gradle/' --exclude='.git/' \
+            --exclude='*.jks' --exclude='*.keystore' \
+            --exclude='key.properties' --exclude='.env' \
+            --exclude='*.log' --exclude='*.stackdump' \
+            driver_app/ source/driver_flutter/
+          cat > source/driver_flutter/SOURCE_README.md <<'README'
+          # ClicKnDine Driver Flutter Source
+          This is the browsable Flutter driver application source.
+          Backend: https://click.6ixmediasa.com
+          Android package: com.sixmediasa.clickndine.driver
+
+          Run flutter pub get, then flutter build apk --release.
+          Use your own release signing keystore for production.
+          README
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A source/driver_flutter
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish readable ClicKnDine Flutter driver source"
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+          fi
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -409,37 +440,6 @@ jobs:
           test -s driver_app/build/app/outputs/flutter-apk/app-release.apk
           ls -lh driver_app/build/app/outputs/flutter-apk/app-release.apk
           sha256sum driver_app/build/app/outputs/flutter-apk/app-release.apk
-
-      - name: Publish browsable driver Flutter source to GitHub
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p source/driver_flutter
-          rsync -a --delete \
-            --exclude='.dart_tool/' --exclude='build/' \
-            --exclude='.gradle/' --exclude='.git/' \
-            --exclude='*.jks' --exclude='*.keystore' \
-            --exclude='key.properties' --exclude='.env' \
-            --exclude='*.log' --exclude='*.stackdump' \
-            driver_app/ source/driver_flutter/
-          cat > source/driver_flutter/SOURCE_README.md <<'README'
-          # ClicKnDine Driver Flutter Source
-          This is the browsable Flutter driver application source.
-          Backend: https://click.6ixmediasa.com
-          Android package: com.sixmediasa.clickndine.driver
-
-          Run flutter pub get, then flutter build apk --release.
-          Use your own release signing keystore for production.
-          README
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A source/driver_flutter
-          if ! git diff --cached --quiet; then
-            git commit -m "Publish readable ClicKnDine Flutter driver source"
-            git fetch origin main
-            git rebase origin/main
-            git push origin HEAD:main
-          fi
 
       - name: Upload ClicKnDine Driver APK
         uses: actions/upload-artifact@v4
