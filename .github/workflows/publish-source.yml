@@ -1,0 +1,170 @@
+name: Publish ClicKnDine Source Folders
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Install Flutter for the web source template
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct source and apply all current build patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, shutil, subprocess, tarfile
+
+          root=Path.cwd()
+          root.joinpath('app').mkdir(exist_ok=True)
+          root.joinpath('driver_app').mkdir(exist_ok=True)
+          root.joinpath('sources').mkdir(exist_ok=True)
+
+          def extract_chunks(pattern, target):
+              chunks=sorted(root.glob(pattern))
+              assert chunks, f'Missing payload: {pattern}'
+              blob=b''.join(base64.b64decode(p.read_text().strip()) for p in chunks)
+              archive=root / '_working_payload.tar.gz'
+              archive.write_bytes(blob)
+              with tarfile.open(archive,'r:gz') as tar:
+                  for member in tar.getmembers():
+                      output=(target/member.name).resolve()
+                      if not output.is_relative_to(target.resolve()):
+                          raise ValueError(f'Unsafe archive entry: {member.name}')
+                  tar.extractall(target,filter='data')
+              archive.unlink()
+
+          extract_chunks('payload/chunk_*.b64', root/'app')
+          extract_chunks('assets_payload/chunk_*.b64', root/'app')
+          extract_chunks('driver_payload/chunk_*.b64', root/'driver_app')
+
+          (root/'driver_app/pubspec.yaml').write_text(
+              '\n'.join(line for line in (root/'driver_app/pubspec.yaml').read_text().splitlines()
+                        if line.strip() != 'weight: 900') + '\n'
+          )
+
+          def run_step(workflow, step_name, cwd):
+              lines=(root/workflow).read_text().splitlines()
+              name_line='      - name: ' + step_name
+              index=next((i for i,line in enumerate(lines) if line==name_line),None)
+              if index is None:
+                  raise ValueError(f'Cannot find step {step_name} in {workflow}')
+              end=next((i for i in range(index+1,len(lines))
+                        if lines[i].startswith('      - name: ')), len(lines))
+              section=lines[index:end]
+              start=next((i for i,line in enumerate(section) if line=='        run: |'),None)
+              if start is None:
+                  raise ValueError(f'Cannot find run block: {step_name}')
+              body='\n'.join(line[10:] if line.startswith('          ') else line
+                             for line in section[start+1:])+'\n'
+              print('Applying:',step_name,flush=True)
+              subprocess.run(['bash','-e','-o','pipefail','-c',body],cwd=cwd,check=True)
+
+          build_apk=Path('.github/workflows/build-apk.yml')
+          for step in [
+              'Finalize ClicKnDine branding and missing assets',
+              'Fix Firebase startup and white splash',
+              'Fix checkout saved address fallback',
+          ]:
+              run_step(build_apk,step,root/'app')
+
+          websteps=Path('.github/workflows/build-web.yml')
+          # Save Android source BEFORE browser-specific changes.
+          shutil.copytree(root/'app',root/'sources/customer-flutter-android',dirs_exist_ok=True)
+
+          subprocess.run(['flutter','create','--platforms','web','--project-name','stackfood_multivendor','.'],
+                         cwd=root/'app',check=True)
+          for step in [
+              'Configure browser Firebase and payment callback',
+              'Fix browser location search and Maps setup',
+              'Fix mobile browser terms consent',
+          ]:
+              run_step(websteps,step,root/'app')
+          shutil.copytree(root/'app',root/'sources/customer-flutter-web',dirs_exist_ok=True)
+
+          driversteps=Path('.github/workflows/build-driver-apk.yml')
+          for step in ['Fix driver Firebase startup and white splash',
+                       'Install resilient visible driver bootstrap']:
+              run_step(driversteps,step,root/'driver_app')
+          shutil.copytree(root/'driver_app',root/'sources/driver-flutter-android',dirs_exist_ok=True)
+
+          # Never publish deployment keys or local workstation/server state in public GitHub.
+          removed=0
+          prohibited_names={
+              '.env','.env.production','.env.local','key.properties','google-services.json',
+              'GoogleService-Info.plist','service-account.json','firebase-adminsdk.json',
+          }
+          prohibited_suffixes={'.jks','.keystore','.p12','.p8','.pem','.key','.log'}
+          excluded_dirs={'.git','.dart_tool','.gradle','build','node_modules','.idea','.vscode','Pods'}
+          for path in sorted((root/'sources').rglob('*'),key=lambda p:len(p.parts),reverse=True):
+              if not path.exists():
+                  continue
+              if path.is_file():
+                  if (path.name in prohibited_names or path.suffix.lower() in prohibited_suffixes
+                      or any(x in excluded_dirs for x in path.relative_to(root/'sources').parts)):
+                      path.unlink()
+                      removed+=1
+          for path in sorted((root/'sources').rglob('*'),key=lambda p:len(p.parts),reverse=True):
+              if path.is_dir() and path.name in excluded_dirs:
+                  shutil.rmtree(path)
+          (root/'sources/README.md').write_text("""# ClicKnDine Source
+
+These Flutter source trees are generated from the versioned payloads and the same
+patch steps used by the APK and Flutter web build workflows.
+
+- customer-flutter-android: Android customer app.
+- customer-flutter-web: browser customer app (latest location and consent changes).
+- driver-flutter-android: Android driver app with visible startup handling.
+
+Live secrets, signing material, and Firebase project files are intentionally excluded.
+Restore google-services.json for local Firebase builds and configure your own web
+Firebase/Google Maps browser API details.
+
+**Laravel admin backend:** not published in this public repository because the
+V8.7n backend may include commercially licensed source. Keep the sanitized complete
+backend archive in a private repository or secure backup. The separate full source
+bundle was supplied in the ClicKnDine conversation.
+
+The exact deployed cPanel version may differ from the latest source snapshots.
+""")
+          assert (root/'sources/customer-flutter-web/lib/main.dart').exists()
+          assert (root/'sources/driver-flutter-android/lib/main.dart').exists()
+          assert 'toggleTerms' in (root/'sources/customer-flutter-web/lib/features/auth/widgets/trams_conditions_check_box_widget.dart').read_text()
+          print('Source snapshots prepared; sensitive files removed:',removed)
+          PY
+
+      - name: Commit readable Flutter source trees to GitHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sources/
+          git diff --cached --stat | tail -20
+          if git diff --cached --quiet; then
+            echo 'No new source files'
+          else
+            git commit -m "Publish readable customer web Android and driver source snapshots"
+            git push origin HEAD:main
+          fi
