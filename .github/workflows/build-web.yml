@@ -356,6 +356,134 @@ jobs:
           print('Browser configuration and Yoco callback updated')
           PY
 
+      - name: Fix browser location search and Maps setup
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('lib/features/location/widgets/location_search_dialog.dart')
+          s=p.read_text()
+          original="builder: (BuildContext context, SearchController controller) {\n            return widget.child ?? Container("
+          assert original in s
+          s=s.replace(original,"builder: (BuildContext context, SearchController controller) {\n            return InkWell(\n              onTap: () => controller.openView(),\n              child: widget.child ?? Container(",1)
+          end="                Icon(Icons.search, color: Theme.of(context).disabledColor),\n              ]),\n            );\n          },"
+          assert end in s
+          s=s.replace(end,"                Icon(Icons.search, color: Theme.of(context).disabledColor),\n              ]),\n              ),\n            );\n          },",1)
+          s=s.replace("PredictionModel suggestion = _predictionList[selectedIndex];",
+                      "if (selectedIndex < 0 || selectedIndex >= _predictionList.length) return;\n                  PredictionModel suggestion = _predictionList[selectedIndex];")
+          s=s.replace("if(widget.fromAddress!) {\n                    widget.callBack!(position);",
+                      "if(widget.fromAddress == true && widget.callBack != null) {\n                    widget.callBack!(position);")
+          p.write_text(s)
+
+          p=Path('lib/features/location/controllers/location_controller.dart')
+          s=p.read_text()
+          a=s.index('  Future<Position> setLocation(String placeID, String? address, GoogleMapController? mapController) async {')
+          b=s.index('\n  void disableButton()',a)
+          replacement="""  Future<Position> setLocation(String placeID, String? address, GoogleMapController? mapController) async {
+            _loading = true;
+            _buttonDisabled = true;
+            update();
+            try {
+              final LatLng selected = await locationServiceInterface.getLatLng(placeID);
+              if(selected.latitude == 0 && selected.longitude == 0) {
+                throw StateError('Location coordinates unavailable');
+              }
+              _pickPosition = Position(
+                latitude: selected.latitude, longitude: selected.longitude,
+                timestamp: DateTime.now(), accuracy: 1, altitude: 1, heading: 1,
+                speed: 1, speedAccuracy: 1, altitudeAccuracy: 1, headingAccuracy: 1,
+              );
+              _pickAddress = (address != null && address.isNotEmpty)
+                  ? address : await getAddressFromGeocode(selected);
+              _changeAddress = false;
+              // Validate zone even if the Maps JavaScript API or camera is unavailable.
+              final ZoneResponseModel zone = await getZone(
+                selected.latitude.toString(), selected.longitude.toString(), true,
+              );
+              _buttonDisabled = !zone.isSuccess;
+              _inZone = zone.isSuccess;
+              if(mapController != null) {
+                try {
+                  await mapController.animateCamera(
+                    CameraUpdate.newCameraPosition(CameraPosition(target: selected, zoom: 16)),
+                  );
+                } catch (error) {
+                  print('Map camera warning: $error');
+                }
+              }
+              return _pickPosition;
+            } catch (error) {
+              _buttonDisabled = true;
+              _inZone = false;
+              showCustomSnackBar('Unable to select location: $error');
+              rethrow;
+            } finally {
+              _loading = false;
+              update();
+            }
+          }
+          """
+          s=s[:a]+replacement+s[b:]
+          p.write_text(s)
+
+          p=Path('lib/features/location/widgets/pick_map_dialog.dart')
+          s=p.read_text()
+          original="                    Text('sharing_your_accurate_location'.tr, style: robotoRegular.copyWith(fontSize: Dimensions.fontSizeSmall)),"
+          assert original in s
+          addition="""
+                    if (GetPlatform.isWeb)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Outside South Africa? Search for Phalaborwa, Limpopo, South Africa, to choose an address inside our service area.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),"""
+          s=s.replace(original,original+addition,1)
+          p.write_text(s)
+
+          # A browser key is NOT the Android key. Set it in maps-config.js in cPanel.
+          Path('web/maps-config.js').write_text(
+            "// Restrict this key to https://app.6ixmediasa.com/* in Google Cloud.\n"
+            "// Enable Maps JavaScript API and billing before use.\n"
+            "window.CLICKN_DINE_MAPS_WEB_KEY = '';\n"
+          )
+          p=Path('web/index.html')
+          s=p.read_text()
+          needle='<script src="flutter_bootstrap.js" async></script>'
+          assert needle in s
+          loader="""<script src="maps-config.js"></script>
+          <script>
+            (function() {
+              const key = (window.CLICKN_DINE_MAPS_WEB_KEY || '').trim();
+              function startFlutter() {
+                const script = document.createElement('script');
+                script.src = 'flutter_bootstrap.js';
+                script.async = true;
+                document.body.appendChild(script);
+              }
+              if(!key) { startFlutter(); return; }
+              const maps = document.createElement('script');
+              maps.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&loading=async';
+              maps.onload = startFlutter;
+              maps.onerror = function() {
+                console.error('Google Maps failed to load. Verify web key, referrers, billing.');
+                startFlutter();
+              };
+              document.head.appendChild(maps);
+            })();
+          </script>"""
+          s=s.replace(needle,loader,1)
+          p.write_text(s)
+          assert 'controller.openView()' in Path('lib/features/location/widgets/location_search_dialog.dart').read_text()
+          assert 'final ZoneResponseModel zone = await getZone' in Path('lib/features/location/controllers/location_controller.dart').read_text()
+          assert 'maps-config.js' in Path('web/index.html').read_text()
+          print('Browser location picker, zone verification and Maps loader updated')
+          PY
+
       - name: Install dependencies
         working-directory: app
         run: flutter pub get
@@ -412,7 +540,16 @@ jobs:
           in a future rebuild, register a WEB app in Firebase project clickndine-eace9
           and configure GitHub Actions variables FIREBASE_WEB_APP_ID and
           FIREBASE_WEB_API_KEY. Web push/social/phone auth may not work until then.
-          Browser Google Maps can require a separate referrer-restricted JavaScript key.
+          Browser Google Maps REQUIRES a browser key and the Maps JavaScript API.
+          After upload, edit maps-config.js inside the subdomain document root and
+          replace the empty value in window.CLICKN_DINE_MAPS_WEB_KEY = '';
+          with your browser-restricted Google Maps JavaScript API key.
+          Google Cloud: enable Maps JavaScript API, attach billing and restrict the
+          key to HTTP referrers https://app.6ixmediasa.com/* .
+          Do not reuse an Android-restricted key for this browser script.
+          Manual location search works even without the map tiles if the server-side
+          address suggestions, place lookup and service-zone API work.
+          Select a location within your actual Phalaborwa delivery area.
 
           If your host uses Nginx, enable SPA fallback to /index.html.
           Apache/cPanel uses the included .htaccess.
